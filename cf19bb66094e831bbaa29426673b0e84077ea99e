@@ -1,0 +1,1 @@
+Upgrades browser-use to 0.13.1 and records that version in benchmark metadata. Adds a Steel-only TypeTextEvent timeout fallback so normal browser-use typing remains the first path, while remote CDP stalls fall back to direct DOM value assignment with input/change events.
