@@ -35,6 +35,7 @@ from dotenv import load_dotenv
 from browser_use import Agent, Browser, ChatGoogle
 from browser_use.llm import ChatBrowserUse
 from browsers import PROVIDERS, get_provider
+from browser_patches import install_remote_typing_fallback
 from judge import construct_judge_messages, JudgementResult
 from llms import ChatZAI
 
@@ -51,7 +52,7 @@ MAX_CONCURRENT = 3
 TASK_TIMEOUT = 1800  # 30 minutes max per task
 
 AGENT_FRAMEWORK_NAME = "BrowserUse"
-AGENT_FRAMEWORK_VERSION = "0.11.5"
+AGENT_FRAMEWORK_VERSION = "0.13.1"
 MODEL_NAME = "bu-2-0"
 ZAI_BASE_URL = os.getenv("ZAI_BASE_URL") or "https://api.z.ai/api/coding/paas/v4"
 
@@ -96,6 +97,8 @@ async def create_browser(browser_provider) -> Browser:
     """
     if browser_provider is None:
         return Browser(use_cloud=True, cloud_timeout=30)
+    if getattr(browser_provider, "REMOTE_TYPING_FALLBACK", False):
+        install_remote_typing_fallback()
     cdp_url = await browser_provider.connect()
     if cdp_url is None:
         return Browser(headless=getattr(browser_provider, "HEADLESS", True))
