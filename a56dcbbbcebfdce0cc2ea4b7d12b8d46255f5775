@@ -1,0 +1,1 @@
+Uses task-local Steel session IDs to avoid concurrent task cleanup races. Keeps proxy and captcha solving enabled, adds the env-gated stealth browser feature, and sets the Steel session lifetime just above the original 1800s benchmark task timeout so Steel does not terminate tasks before the runner does.
