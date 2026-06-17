@@ -1,0 +1,1 @@
+Adds a dedicated z.ai browser-use adapter because GLM-5.2 needs z.ai thinking/reasoning controls and function-call based structured output. Also adds benchmark/model selection so Stealth_Bench_V1 can run with GLM without changing the default BU_Bench path.
