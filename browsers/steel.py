@@ -9,14 +9,17 @@ forces IPv4 resolution for connect.steel.dev to avoid 502 errors.
 
 import os
 import socket
+from contextvars import ContextVar
 
 import httpx
 
 from browsers import retry_on_429
 
-_session_id: str | None = None
+_session_id: ContextVar[str | None] = ContextVar("steel_session_id", default=None)
 
 _original_getaddrinfo = socket.getaddrinfo
+STEALTH_CAPABLE = True
+REMOTE_TYPING_FALLBACK = True
 
 
 def _getaddrinfo_ipv4_for_steel(host, port, family=0, *args, **kwargs):
@@ -28,34 +31,48 @@ def _getaddrinfo_ipv4_for_steel(host, port, family=0, *args, **kwargs):
 socket.getaddrinfo = _getaddrinfo_ipv4_for_steel
 
 
+def stealth_enabled() -> bool:
+    return os.environ.get("STEEL_USE_STEALTH", "").lower() in ("1", "true", "yes")
+
+
+def current_session_id() -> str | None:
+    return _session_id.get()
+
+
 async def connect() -> str:
-    global _session_id
     api_key = os.environ["STEEL_API_KEY"]
+    # Keep the provider session slightly longer than the benchmark's 1800s
+    # task timeout so the runner, not Steel, owns task termination semantics.
+    payload = {"useProxy": True, "solveCaptcha": True, "timeout": 1860000}
+    if stealth_enabled():
+        payload["experimentalFeatures"] = ["useStealthBrowser"]
 
     async def _create():
         async with httpx.AsyncClient() as client:
             resp = await client.post(
                 "https://api.steel.dev/v1/sessions",
                 headers={"steel-api-key": api_key},
-                json={"useProxy": True, "solveCaptcha": True},
+                json=payload,
                 timeout=30,
             )
             resp.raise_for_status()
             return resp.json()
 
     data = await retry_on_429(_create)
-    _session_id = data.get("id")
+    _session_id.set(data.get("id"))
     return f"{data['websocketUrl']}&apiKey={api_key}"
 
 
 async def disconnect() -> None:
-    global _session_id
-    if not _session_id:
+    session_id = _session_id.get()
+    if not session_id:
         return
-    async with httpx.AsyncClient() as client:
-        await client.delete(
-            f"https://api.steel.dev/v1/sessions/{_session_id}",
-            headers={"steel-api-key": os.environ["STEEL_API_KEY"]},
-            timeout=30,
-        )
-    _session_id = None
+    try:
+        async with httpx.AsyncClient() as client:
+            await client.delete(
+                f"https://api.steel.dev/v1/sessions/{session_id}",
+                headers={"steel-api-key": os.environ["STEEL_API_KEY"]},
+                timeout=30,
+            )
+    finally:
+        _session_id.set(None)
