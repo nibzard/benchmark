@@ -1,0 +1,1 @@
+Ports the safer native setter and input/change event semantics from Steel cookbook PR #73 into the transparent TypeTextEvent timeout fallback. This keeps benchmark tools unchanged while improving direct DOM recovery for inputs, textareas, and contenteditable fields.
