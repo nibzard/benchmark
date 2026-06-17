@@ -1,0 +1,1 @@
+Ensures every task path writes a trace, including timeout and exception paths, and always attempts bounded browser/provider cleanup. Adds stealth and provider session IDs to task results so failed browser sessions can be audited after a run.
