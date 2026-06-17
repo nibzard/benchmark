@@ -1,0 +1,1 @@
+Creates run_state.json at launch and updates it as task results arrive. Disables browser-use's hard-exit signal handler so the runner can cancel active tasks, run provider cleanup, and release Steel sessions on SIGINT/SIGTERM.
