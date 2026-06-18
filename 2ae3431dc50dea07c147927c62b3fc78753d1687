@@ -1,0 +1,1 @@
+Core branch: isolates provider sessions per task across shared providers.
