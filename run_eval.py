@@ -51,6 +51,7 @@ BENCHMARKS = {
 }
 MAX_CONCURRENT = 3
 TASK_TIMEOUT = 1800  # 30 minutes max per task
+PROVIDER_SETUP_TIMEOUT = 300  # 5 minutes max to create/connect a browser
 
 AGENT_FRAMEWORK_NAME = "BrowserUse"
 AGENT_FRAMEWORK_VERSION = "0.13.1"
@@ -182,7 +183,15 @@ async def run_task(
             task_id = task.get("task_id", "unknown")
             print(f"Running task: {task_id}")
 
-            browser = await create_browser(browser_provider)
+            try:
+                browser = await asyncio.wait_for(
+                    create_browser(browser_provider),
+                    timeout=PROVIDER_SETUP_TIMEOUT,
+                )
+            except asyncio.TimeoutError as e:
+                raise TimeoutError(
+                    f"Browser setup timed out after {PROVIDER_SETUP_TIMEOUT}s"
+                ) from e
             if browser_provider and hasattr(browser_provider, "current_session_id"):
                 provider_session_id = browser_provider.current_session_id()
 
@@ -392,6 +401,7 @@ async def main():
         "stealth": stealth,
         "max_concurrent": MAX_CONCURRENT,
         "task_timeout": TASK_TIMEOUT,
+        "provider_setup_timeout": PROVIDER_SETUP_TIMEOUT,
         "total_tasks": len(tasks),
         "completed_tasks": 0,
         "successful_tasks": 0,
