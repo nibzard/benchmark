@@ -355,6 +355,11 @@ async def main():
         help="Number of tasks to run (default: all)",
     )
     parser.add_argument(
+        "--task-ids",
+        default=None,
+        help="Comma-separated task IDs to run (default: all). Applied after --tasks.",
+    )
+    parser.add_argument(
         "--model",
         default=MODEL_NAME,
         choices=list(MODELS.keys()),
@@ -390,6 +395,9 @@ async def main():
     tasks = load_tasks(args.benchmark)
     if args.tasks:
         tasks = tasks[: args.tasks]
+    if args.task_ids:
+        wanted = {int(x) for x in args.task_ids.split(",") if x.strip()}
+        tasks = [t for t in tasks if t.get("task_id") in wanted]
     run_state = {
         "run_start": run_start,
         "status": "running",
