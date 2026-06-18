@@ -1,0 +1,1 @@
+Core branch: preserves failed task traces so benchmark failures remain diagnosable.
