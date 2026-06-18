@@ -1,0 +1,1 @@
+Core branch follow-up: provider session creation uses non-idempotent POSTs, so retry only safe failure classes and bound retries with an overall deadline. Aligns provider setup timeout with that deadline.
