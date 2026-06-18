@@ -1,0 +1,1 @@
+Session creation uses non-idempotent provider POSTs. Retry only safer failure classes and enforce an overall deadline so setup cannot hang indefinitely or duplicate sessions after ambiguous server-side failures.
