@@ -1,0 +1,1 @@
+Provider session ids are stored in ContextVars. asyncio.wait_for(coro) wraps the coroutine in a separate task on Python 3.11, so session ids set during provider connect were not visible to cleanup. asyncio.timeout keeps setup bounded in the current task.
