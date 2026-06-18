@@ -1,0 +1,1 @@
+Fixes PR feedback for non-default benchmark run keys. The ZAI benchmark selector kept the historical BU_Bench_V1 filename but omitted BrowserUse framework/version metadata for other benchmark names, so append-only result files could mix incompatible agent versions. This keeps the default filename stable and prefixes custom benchmarks onto the full framework-aware key.
