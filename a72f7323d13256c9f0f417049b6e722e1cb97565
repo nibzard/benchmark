@@ -1,0 +1,1 @@
+Adds environment controls for Steel captcha solving, proxy geolocation, and region while preserving the previous defaults: captcha solving on and proxy enabled.
