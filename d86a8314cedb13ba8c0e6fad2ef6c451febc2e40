@@ -1,0 +1,1 @@
+Transient provider retries are useful benchmark hygiene, but browser setup happens before the agent task timeout starts. This caps setup time provider-neutrally and records the budget in run state so provider API stalls cannot silently consume unbounded wall-clock time outside the task window.
