@@ -35,6 +35,29 @@ def stealth_enabled() -> bool:
     return os.environ.get("STEEL_USE_STEALTH", "").lower() in ("1", "true", "yes")
 
 
+def solve_captcha_enabled() -> bool:
+    # Defaults to True (Steel's captcha solver on). Set STEEL_SOLVE_CAPTCHA=false
+    # to disable, e.g. for benchmarking agent behavior against unsolved captchas.
+    return os.environ.get("STEEL_SOLVE_CAPTCHA", "true").lower() in ("1", "true", "yes")
+
+
+def proxy_config() -> bool | dict:
+    country = os.environ.get("STEEL_PROXY_COUNTRY")
+    state = os.environ.get("STEEL_PROXY_STATE")
+    city = os.environ.get("STEEL_PROXY_CITY")
+    if not any((country, state, city)):
+        return True
+
+    geolocation = {}
+    if country:
+        geolocation["country"] = country
+    if state:
+        geolocation["state"] = state
+    if city:
+        geolocation["city"] = city
+    return {"geolocation": geolocation}
+
+
 def current_session_id() -> str | None:
     return _session_id.get()
 
@@ -43,7 +66,13 @@ async def connect() -> str:
     api_key = os.environ["STEEL_API_KEY"]
     # Keep the provider session slightly longer than the benchmark's 1800s
     # task timeout so the runner, not Steel, owns task termination semantics.
-    payload = {"useProxy": True, "solveCaptcha": True, "timeout": 1860000}
+    payload = {
+        "useProxy": proxy_config(),
+        "solveCaptcha": solve_captcha_enabled(),
+        "timeout": 1860000,
+    }
+    if region := os.environ.get("STEEL_REGION"):
+        payload["region"] = region
     if stealth_enabled():
         payload["experimentalFeatures"] = ["useStealthBrowser"]
 
