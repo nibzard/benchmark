@@ -1,0 +1,1 @@
+The benchmark runs multiple tasks concurrently. Module-level provider session ids can be overwritten by another task before cleanup or trace attribution, while Steel already used task-local state. This change makes the stateful API-backed providers follow the same task-local pattern.
