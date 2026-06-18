@@ -10,7 +10,7 @@ import json
 from dotenv import load_dotenv
 from browser_use import ChatGoogle
 from browser_use.llm import ChatBrowserUse, ChatOpenAI, ChatAnthropic
-from run_eval import load_tasks, run_task
+from run_eval import empty_usage, load_tasks, run_task, sum_usage
 
 load_dotenv()
 
@@ -63,6 +63,10 @@ async def run_batch(model_name: str, start: int, end: int, parallel: int = 3, tr
         "total_steps": sum(r.get("steps", 0) for r in results),
         "total_duration": sum(r.get("duration", 0) for r in results),
         "total_cost": sum(r.get("cost", 0) for r in results),
+        "total_usage": sum_usage([r.get("usage", empty_usage()) for r in results]),
+        "total_judge_usage": sum_usage(
+            [r.get("judge_usage", empty_usage()) for r in results]
+        ),
         "task_results": [
             {
                 "task_id": r["task_id"],
@@ -72,6 +76,8 @@ async def run_batch(model_name: str, start: int, end: int, parallel: int = 3, tr
                 "steps": r.get("steps", 0),
                 "duration": r.get("duration", 0),
                 "cost": r.get("cost", 0),
+                "usage": r.get("usage", empty_usage()),
+                "judge_usage": r.get("judge_usage", empty_usage()),
             }
             for r in results
         ],

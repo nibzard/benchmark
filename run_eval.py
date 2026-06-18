@@ -69,12 +69,146 @@ def load_tasks() -> list[dict]:
     return json.loads(Fernet(key).decrypt(encrypted))
 
 
+USAGE_TOTAL_KEYS = (
+    "total_prompt_tokens",
+    "total_prompt_cached_tokens",
+    "total_prompt_cache_creation_tokens",
+    "total_completion_tokens",
+    "total_tokens",
+    "total_cost",
+    "entry_count",
+)
+USAGE_SINGLE_CALL_KEYS = (
+    "prompt_tokens",
+    "prompt_cached_tokens",
+    "prompt_cache_creation_tokens",
+    "prompt_cache_creation_5m_tokens",
+    "prompt_cache_creation_1h_tokens",
+    "prompt_image_tokens",
+    "completion_tokens",
+    "total_tokens",
+)
+USAGE_MODEL_KEYS = (
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "cost",
+    "invocations",
+    "average_tokens_per_invocation",
+)
+
+
+def empty_usage() -> dict:
+    return {
+        "total_prompt_tokens": 0,
+        "total_prompt_cached_tokens": 0,
+        "total_prompt_cache_creation_tokens": 0,
+        "total_completion_tokens": 0,
+        "total_tokens": 0,
+        "total_cost": 0.0,
+        "entry_count": 0,
+        "by_model": {},
+    }
+
+
+def _usage_to_dict(usage) -> dict:
+    if usage is None:
+        return {}
+    if hasattr(usage, "model_dump"):
+        return usage.model_dump(mode="json")
+    if hasattr(usage, "dict"):
+        return usage.dict()
+    if isinstance(usage, dict):
+        return usage
+    return {
+        key: value
+        for key in (*USAGE_TOTAL_KEYS, *USAGE_SINGLE_CALL_KEYS)
+        if (value := getattr(usage, key, None)) is not None
+    }
+
+
+def serialize_usage(usage) -> dict:
+    """Serialize BrowserUse usage objects into stable raw token fields."""
+    data = _usage_to_dict(usage)
+    result = empty_usage()
+
+    # UsageSummary shape.
+    for key in USAGE_TOTAL_KEYS:
+        if data.get(key) is not None:
+            result[key] = data[key]
+
+    # Single ChatInvokeUsage shape, used by individual judge/model calls.
+    if "prompt_tokens" in data:
+        result["total_prompt_tokens"] = data.get("prompt_tokens") or 0
+        result["total_prompt_cached_tokens"] = data.get("prompt_cached_tokens") or 0
+        result["total_prompt_cache_creation_tokens"] = (
+            data.get("prompt_cache_creation_tokens") or 0
+        )
+        result["total_completion_tokens"] = data.get("completion_tokens") or 0
+        result["total_tokens"] = data.get("total_tokens") or (
+            result["total_prompt_tokens"] + result["total_completion_tokens"]
+        )
+        result["entry_count"] = 1
+        result["raw"] = {
+            key: data[key]
+            for key in USAGE_SINGLE_CALL_KEYS
+            if data.get(key) is not None
+        }
+
+    by_model = data.get("by_model") or {}
+    result["by_model"] = {
+        model: {
+            key: value
+            for key in USAGE_MODEL_KEYS
+            if (value := stats.get(key)) is not None
+        }
+        for model, stats in by_model.items()
+        if isinstance(stats, dict)
+    }
+    return result
+
+
+def sum_usage(usages: list[dict]) -> dict:
+    total = empty_usage()
+    for usage in usages:
+        for key in USAGE_TOTAL_KEYS:
+            total[key] += usage.get(key, 0) or 0
+        for model, stats in (usage.get("by_model") or {}).items():
+            model_total = total["by_model"].setdefault(
+                model,
+                {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "cost": 0.0,
+                    "invocations": 0,
+                    "average_tokens_per_invocation": 0.0,
+                },
+            )
+            for key in (
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+                "cost",
+                "invocations",
+            ):
+                model_total[key] += stats.get(key, 0) or 0
+    for stats in total["by_model"].values():
+        invocations = stats.get("invocations", 0) or 0
+        stats["average_tokens_per_invocation"] = (
+            stats["total_tokens"] / invocations if invocations else 0.0
+        )
+    return total
+
+
 def write_task_trace(
     run_data_dir: Path | None,
     task_id: str,
     *,
     agent_trace: dict,
     metrics: dict,
+    usage: dict | None = None,
+    judge_usage: dict | None = None,
     judgement: dict | None = None,
     error: str | None = None,
     traceback_text: str | None = None,
@@ -85,6 +219,10 @@ def write_task_trace(
         "agent_trace": agent_trace,
         "metrics": metrics,
     }
+    if usage is not None:
+        payload["usage"] = usage
+    if judge_usage is not None:
+        payload["judge_usage"] = judge_usage
     if judgement is not None:
         payload["judgement"] = judgement
     if error is not None:
@@ -187,6 +325,8 @@ async def run_task(
                 )
             except asyncio.TimeoutError:
                 print(f"Task {task_id} timed out after {TASK_TIMEOUT}s")
+                usage = empty_usage()
+                judge_usage = empty_usage()
                 write_task_trace(
                     run_data_dir,
                     str(task_id),
@@ -199,6 +339,8 @@ async def run_task(
                         "provider_session_id": provider_session_id,
                     },
                     metrics={"steps": 0, "duration": TASK_TIMEOUT, "cost": 0},
+                    usage=usage,
+                    judge_usage=judge_usage,
                     error=f"Task timed out after {TASK_TIMEOUT}s",
                 )
                 return {
@@ -209,6 +351,8 @@ async def run_task(
                     "steps": 0,
                     "duration": TASK_TIMEOUT,
                     "cost": 0,
+                    "usage": usage,
+                    "judge_usage": judge_usage,
                     "error": f"Task timed out after {TASK_TIMEOUT}s",
                 }
             finally:
@@ -217,7 +361,8 @@ async def run_task(
             # Collect task metrics from agent history
             steps = agent_history.number_of_steps()
             duration = agent_history.total_duration_seconds()
-            cost = agent_history.usage.total_cost if agent_history.usage else 0
+            usage = serialize_usage(agent_history.usage)
+            cost = usage.get("total_cost", 0)
 
             # Collect judge inputs from agent history
             agent_task = task["confirmed_task"]
@@ -242,6 +387,7 @@ async def run_task(
                 judge_messages, output_format=JudgementResult
             )
             judgement: JudgementResult = response.completion
+            judge_usage = serialize_usage(getattr(response, "usage", None))
 
             score = 1 if judgement.verdict else 0
             print(
@@ -263,6 +409,8 @@ async def run_task(
                 str(task_id),
                 agent_trace=trace,
                 metrics=metrics,
+                usage=usage,
+                judge_usage=judge_usage,
                 judgement=judgement.model_dump(),
             )
 
@@ -274,11 +422,15 @@ async def run_task(
                 "steps": steps,
                 "duration": duration,
                 "cost": cost,
+                "usage": usage,
+                "judge_usage": judge_usage,
                 "judgement": judgement.model_dump(),
             }
 
         except Exception as e:
             await cleanup_browser()
+            usage = empty_usage()
+            judge_usage = empty_usage()
             error_type = type(e).__name__
             error_msg = f"{error_type}: {e}"
             print(f"Task {task.get('task_id', 'unknown')} failed: {error_msg}")
@@ -294,6 +446,8 @@ async def run_task(
                     "provider_session_id": provider_session_id,
                 },
                 metrics={"steps": 0, "duration": 0, "cost": 0},
+                usage=usage,
+                judge_usage=judge_usage,
                 error=error_msg,
                 traceback_text=traceback.format_exc(),
             )
@@ -305,6 +459,8 @@ async def run_task(
                 "steps": 0,
                 "duration": 0,
                 "cost": 0,
+                "usage": usage,
+                "judge_usage": judge_usage,
                 "error": error_msg,
                 "traceback": traceback.format_exc(),
             }
@@ -368,6 +524,8 @@ async def main():
         "successful_tasks": 0,
         "failed_tasks": 0,
         "pending_tasks": len(tasks),
+        "total_usage": empty_usage(),
+        "total_judge_usage": empty_usage(),
         "task_results": [],
     }
     write_run_state(run_data_dir, run_state)
@@ -422,6 +580,8 @@ async def main():
                         "steps": 0,
                         "duration": 0,
                         "cost": 0,
+                        "usage": empty_usage(),
+                        "judge_usage": empty_usage(),
                         "error": "CancelledError: task cancelled unexpectedly",
                     }
                 except Exception as e:
@@ -431,6 +591,8 @@ async def main():
                         "steps": 0,
                         "duration": 0,
                         "cost": 0,
+                        "usage": empty_usage(),
+                        "judge_usage": empty_usage(),
                         "error": f"{type(e).__name__}: {e}",
                     }
                 results.append(result)
@@ -451,10 +613,18 @@ async def main():
                         "steps": r.get("steps", 0),
                         "duration": r.get("duration", 0),
                         "cost": r.get("cost", 0),
+                        "usage": r.get("usage", empty_usage()),
+                        "judge_usage": r.get("judge_usage", empty_usage()),
                         "error": r.get("error"),
                     }
                     for r in results
                 ]
+                run_state["total_usage"] = sum_usage(
+                    [r.get("usage", empty_usage()) for r in results]
+                )
+                run_state["total_judge_usage"] = sum_usage(
+                    [r.get("judge_usage", empty_usage()) for r in results]
+                )
                 write_run_state(run_data_dir, run_state)
 
         if stop_event.is_set():
@@ -479,6 +649,10 @@ async def main():
     total_steps = sum(r.get("steps", 0) for r in results)
     total_duration = sum(r.get("duration", 0) for r in results)
     total_cost = sum(r.get("cost", 0) for r in results)
+    total_usage = sum_usage([r.get("usage", empty_usage()) for r in results])
+    total_judge_usage = sum_usage(
+        [r.get("judge_usage", empty_usage()) for r in results]
+    )
 
     # Save results (append to existing runs)
     results_file.parent.mkdir(parents=True, exist_ok=True)
@@ -491,6 +665,8 @@ async def main():
             "total_steps": total_steps,
             "total_duration": total_duration,
             "total_cost": total_cost,
+            "total_usage": total_usage,
+            "total_judge_usage": total_judge_usage,
         }
     )
     results_file.write_text(json.dumps(runs, indent=2))
@@ -502,6 +678,8 @@ async def main():
     run_state["total_steps"] = total_steps
     run_state["total_duration"] = total_duration
     run_state["total_cost"] = total_cost
+    run_state["total_usage"] = total_usage
+    run_state["total_judge_usage"] = total_judge_usage
     write_run_state(run_data_dir, run_state)
 
     print(
