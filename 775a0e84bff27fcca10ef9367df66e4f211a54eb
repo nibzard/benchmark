@@ -1,0 +1,1 @@
+Core branch: bounds provider setup time so session creation cannot hang indefinitely.
