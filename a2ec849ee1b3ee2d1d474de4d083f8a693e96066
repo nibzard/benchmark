@@ -1,0 +1,1 @@
+Supports targeted benchmark diagnostics by task id without relying on positional slicing alone. The filter is applied after --tasks so existing prefix-limited runs keep their behavior.
