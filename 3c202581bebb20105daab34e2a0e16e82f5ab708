@@ -1,0 +1,1 @@
+Keeps CRITICAL as the default quiet benchmark behavior, but allows temporary diagnosis with RUN_EVAL_LOG_LEVEL=INFO or DEBUG without editing source.
