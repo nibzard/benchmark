@@ -40,6 +40,58 @@ API_BASE = f"https://api.github.com/repos/{REPO}"
 HEADERS = {"Authorization": f"token {GITHUB_TOKEN}", "Accept": "application/vnd.github.v3+json"}
 
 
+def empty_usage() -> dict:
+    return {
+        "total_prompt_tokens": 0,
+        "total_prompt_cached_tokens": 0,
+        "total_prompt_cache_creation_tokens": 0,
+        "total_completion_tokens": 0,
+        "total_tokens": 0,
+        "total_cost": 0.0,
+        "entry_count": 0,
+        "by_model": {},
+    }
+
+
+def merge_usage(target: dict, source: dict | None) -> dict:
+    source = source or {}
+    for key in (
+        "total_prompt_tokens",
+        "total_prompt_cached_tokens",
+        "total_prompt_cache_creation_tokens",
+        "total_completion_tokens",
+        "total_tokens",
+        "total_cost",
+        "entry_count",
+    ):
+        target[key] = target.get(key, 0) + (source.get(key, 0) or 0)
+    for model, stats in (source.get("by_model") or {}).items():
+        model_total = target["by_model"].setdefault(
+            model,
+            {
+                "prompt_tokens": 0,
+                "completion_tokens": 0,
+                "total_tokens": 0,
+                "cost": 0.0,
+                "invocations": 0,
+                "average_tokens_per_invocation": 0.0,
+            },
+        )
+        for key in (
+            "prompt_tokens",
+            "completion_tokens",
+            "total_tokens",
+            "cost",
+            "invocations",
+        ):
+            model_total[key] += stats.get(key, 0) or 0
+        invocations = model_total.get("invocations", 0) or 0
+        model_total["average_tokens_per_invocation"] = (
+            model_total["total_tokens"] / invocations if invocations else 0.0
+        )
+    return target
+
+
 def dispatch_batch(model: str, start: int, end: int, tracking_id: str, run_start: str) -> bool:
     """Dispatch a workflow run. Returns True if successful."""
     url = f"{API_BASE}/actions/workflows/{WORKFLOW_FILE}/dispatches"
@@ -102,7 +154,16 @@ def save_result(model: str, batch_result: dict):
     run_entry = next((r for r in runs if r.get("run_start") == run_start), None)
     
     if not run_entry:
-        run_entry = {"run_start": run_start, "tasks_completed": 0, "tasks_successful": 0, "total_steps": 0, "total_duration": 0, "total_cost": 0}
+        run_entry = {
+            "run_start": run_start,
+            "tasks_completed": 0,
+            "tasks_successful": 0,
+            "total_steps": 0,
+            "total_duration": 0,
+            "total_cost": 0,
+            "total_usage": empty_usage(),
+            "total_judge_usage": empty_usage(),
+        }
         runs.append(run_entry)
     
     # Aggregate batch metrics
@@ -111,6 +172,14 @@ def save_result(model: str, batch_result: dict):
     run_entry["total_steps"] += batch_result.get("total_steps", 0)
     run_entry["total_duration"] += batch_result.get("total_duration", 0)
     run_entry["total_cost"] += batch_result.get("total_cost", 0)
+    run_entry["total_usage"] = merge_usage(
+        run_entry.get("total_usage") or empty_usage(),
+        batch_result.get("total_usage"),
+    )
+    run_entry["total_judge_usage"] = merge_usage(
+        run_entry.get("total_judge_usage") or empty_usage(),
+        batch_result.get("total_judge_usage"),
+    )
     
     filename.write_text(json.dumps(runs, indent=2))
 
