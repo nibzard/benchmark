@@ -1,0 +1,1 @@
+Core branch: handles interruptions by writing run_state and cancelling active work cleanly.
