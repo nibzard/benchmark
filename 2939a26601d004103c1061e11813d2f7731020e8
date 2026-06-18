@@ -1,0 +1,1 @@
+Persist raw token usage separately from cost so benchmark runs can be repriced later when model pricing changes. Agent usage and judge usage are tracked independently at task and aggregate levels; existing cost fields remain for compatibility.
