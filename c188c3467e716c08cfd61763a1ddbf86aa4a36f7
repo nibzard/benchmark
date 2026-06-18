@@ -1,0 +1,1 @@
+Provider API failures such as timeouts and 5xx/429 responses are harness noise for this benchmark. This centralizes retry handling so API-backed browser providers get the same transient-failure treatment instead of giving Steel-specific hardening.
