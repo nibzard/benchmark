@@ -1,0 +1,1 @@
+Core branch: keeps CRITICAL logging by default while allowing RUN_EVAL_LOG_LEVEL overrides for diagnosis.
