@@ -2,7 +2,7 @@
 
 import importlib
 
-from browsers.util import retry_on_429
+from browsers.util import retry_on_429, retry_session_create
 from browsers import (
     anchor,
     browser_use_cloud,

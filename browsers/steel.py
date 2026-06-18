@@ -13,7 +13,7 @@ from contextvars import ContextVar
 
 import httpx
 
-from browsers import retry_on_429
+from browsers.util import retry_session_create
 
 _session_id: ContextVar[str | None] = ContextVar("steel_session_id", default=None)
 
@@ -58,7 +58,8 @@ async def connect() -> str:
             resp.raise_for_status()
             return resp.json()
 
-    data = await retry_on_429(_create)
+    # Non-idempotent POST with no Steel idempotency key; retry only safe classes.
+    data = await retry_session_create(_create)
     _session_id.set(data.get("id"))
     return f"{data['websocketUrl']}&apiKey={api_key}"
 
