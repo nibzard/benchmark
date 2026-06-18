@@ -1,0 +1,1 @@
+A completed run should not silently lose a task result when a task is cancelled outside the explicit stop path. Signal-driven cancellation still contributes to an interrupted run; other cancellations now become visible failed task results.
