@@ -1,0 +1,1 @@
+Stores the retained Steel/GLM-5.2 investigation artifacts on a dedicated branch via Git LFS: the full benchmark run, the task 24/68 rerun, and the ReadTimeout diagnostic run. Source changes and FINDINGS.md remain outside this artifact commit.
