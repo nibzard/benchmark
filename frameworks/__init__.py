@@ -69,6 +69,7 @@ class ExecutionResult:
     duration_seconds: float
     cost: float = 0.0
     usage: dict[str, Any] | None = None
+    diagnostics: dict[str, Any] | None = None
 
 
 @dataclass
@@ -378,6 +379,9 @@ def _maybe_write_task_artifact(
             "cost": result.cost,
         }
         payload["usage"] = result.usage or empty_usage()
+        diagnostics = getattr(result, "diagnostics", None)
+        if diagnostics:
+            payload["diagnostics"] = diagnostics
     if judge_usage is not None:
         payload["judge_usage"] = judge_usage
     if error:
@@ -428,6 +432,9 @@ async def run_and_judge(
             "judge_usage": judge_usage,
             "judgement": judgement_data,
         }
+        diagnostics = getattr(result, "diagnostics", None)
+        if diagnostics:
+            data["diagnostics"] = diagnostics
         provider_session_id = getattr(result, "provider_session_id", None)
         if provider_session_id is not None:
             data["provider_session_id"] = provider_session_id

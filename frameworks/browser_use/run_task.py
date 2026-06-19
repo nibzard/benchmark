@@ -13,7 +13,12 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from dotenv import load_dotenv
 from browser_use import Agent, Browser
 from browsers import BROWSERS
-from browser_patches import install_remote_typing_fallback
+from browser_patches import (
+    clear_anthropic_tool_use_retry_diagnostics,
+    get_anthropic_tool_use_retry_diagnostics,
+    install_anthropic_tool_use_retry,
+    install_remote_typing_fallback,
+)
 from models import MODELS
 from frameworks import (
     ExecutionResult,
@@ -49,6 +54,9 @@ async def execute(
     provider = BROWSERS[browser_name]
     if getattr(provider, "REMOTE_TYPING_FALLBACK", False):
         install_remote_typing_fallback()
+    if getattr(llm, "provider", None) == "anthropic":
+        install_anthropic_tool_use_retry()
+        clear_anthropic_tool_use_retry_diagnostics()
 
     browser = None
     provider_session_id = None
@@ -87,6 +95,13 @@ async def execute(
             pass
 
     usage = serialize_usage(history.usage)
+    anthropic_tool_use_diagnostics = get_anthropic_tool_use_retry_diagnostics(
+        reset=True
+    )
+    diagnostics = {}
+    if anthropic_tool_use_diagnostics:
+        diagnostics["anthropic_tool_use_retry"] = anthropic_tool_use_diagnostics
+
     result = ExecutionResult(
         final_result=history.final_result() or "Agent did not return a result",
         steps=history.agent_steps(),
@@ -97,6 +112,7 @@ async def execute(
         duration_seconds=history.total_duration_seconds(),
         cost=usage.get("total_cost", 0),
         usage=usage,
+        diagnostics=diagnostics or None,
     )
     result.provider_session_id = provider_session_id
     result.stealth = stealth

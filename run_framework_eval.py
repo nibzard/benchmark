@@ -304,6 +304,7 @@ async def _run_all(args: argparse.Namespace) -> list[dict]:
                     else {}
                 ),
                 **({"stealth": r["stealth"]} if "stealth" in r else {}),
+                **({"diagnostics": r["diagnostics"]} if r.get("diagnostics") else {}),
                 **({"error": r["error"]} if r.get("error") else {}),
             }
             for r in results
