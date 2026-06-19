@@ -66,9 +66,11 @@ from dotenv import load_dotenv
 from frameworks import (
     DEFAULT_TASK_TIMEOUT,
     FRAMEWORKS,
+    empty_usage,
     framework_to_module,
     interleave,
     load_tasks,
+    sum_usage,
 )
 
 ROOT_DIR = Path(__file__).resolve().parent
@@ -133,6 +135,8 @@ async def _run_one(
             "steps": 0,
             "duration": 0,
             "cost": 0,
+            "usage": empty_usage(),
+            "judge_usage": empty_usage(),
             "error": f"Missing framework runner: {runner}",
         }
 
@@ -194,6 +198,8 @@ async def _run_one(
             "steps": 0,
             "duration": parent_timeout,
             "cost": 0,
+            "usage": empty_usage(),
+            "judge_usage": empty_usage(),
             "error": f"Runner exceeded parent timeout after {parent_timeout}s",
         }
 
@@ -204,6 +210,8 @@ async def _run_one(
         "steps": 0,
         "duration": 0,
         "cost": 0,
+        "usage": empty_usage(),
+        "judge_usage": empty_usage(),
         "error": f"Runner exited {proc.returncode} without writing {result_file}",
     }
 
@@ -274,6 +282,12 @@ async def _run_all(args: argparse.Namespace) -> list[dict]:
         "total_steps": sum(int(r.get("steps", 0) or 0) for r in results),
         "total_duration": sum(float(r.get("duration", 0) or 0) for r in results),
         "total_cost": sum(float(r.get("cost", 0) or 0) for r in results),
+        "total_usage": sum_usage(
+            [r.get("usage", empty_usage()) for r in results]
+        ),
+        "total_judge_usage": sum_usage(
+            [r.get("judge_usage", empty_usage()) for r in results]
+        ),
         "task_results": [
             {
                 "task_id": r.get("task_id"),
@@ -282,6 +296,8 @@ async def _run_all(args: argparse.Namespace) -> list[dict]:
                 "steps": r.get("steps", 0),
                 "duration": r.get("duration", 0),
                 "cost": r.get("cost", 0),
+                "usage": r.get("usage", empty_usage()),
+                "judge_usage": r.get("judge_usage", empty_usage()),
                 **(
                     {"provider_session_id": r["provider_session_id"]}
                     if r.get("provider_session_id")

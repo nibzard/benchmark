@@ -68,6 +68,7 @@ class ExecutionResult:
     num_steps: int
     duration_seconds: float
     cost: float = 0.0
+    usage: dict[str, Any] | None = None
 
 
 @dataclass
@@ -185,6 +186,136 @@ def load_tasks(benchmark: str) -> list[dict]:
     return json.loads(Fernet(key).decrypt(encrypted))
 
 
+USAGE_TOTAL_KEYS = (
+    "total_prompt_tokens",
+    "total_prompt_cached_tokens",
+    "total_prompt_cache_creation_tokens",
+    "total_completion_tokens",
+    "total_tokens",
+    "total_cost",
+    "entry_count",
+)
+USAGE_SINGLE_CALL_KEYS = (
+    "prompt_tokens",
+    "prompt_cached_tokens",
+    "prompt_cache_creation_tokens",
+    "prompt_cache_creation_5m_tokens",
+    "prompt_cache_creation_1h_tokens",
+    "prompt_image_tokens",
+    "completion_tokens",
+    "total_tokens",
+)
+USAGE_MODEL_KEYS = (
+    "prompt_tokens",
+    "completion_tokens",
+    "total_tokens",
+    "cost",
+    "invocations",
+    "average_tokens_per_invocation",
+)
+
+
+def empty_usage() -> dict:
+    return {
+        "total_prompt_tokens": 0,
+        "total_prompt_cached_tokens": 0,
+        "total_prompt_cache_creation_tokens": 0,
+        "total_completion_tokens": 0,
+        "total_tokens": 0,
+        "total_cost": 0.0,
+        "entry_count": 0,
+        "by_model": {},
+    }
+
+
+def _usage_to_dict(usage) -> dict:
+    if usage is None:
+        return {}
+    if hasattr(usage, "model_dump"):
+        return usage.model_dump(mode="json")
+    if hasattr(usage, "dict"):
+        return usage.dict()
+    if isinstance(usage, dict):
+        return usage
+    return {
+        key: value
+        for key in (*USAGE_TOTAL_KEYS, *USAGE_SINGLE_CALL_KEYS)
+        if (value := getattr(usage, key, None)) is not None
+    }
+
+
+def serialize_usage(usage) -> dict:
+    """Serialize framework usage objects into stable raw token fields."""
+    data = _usage_to_dict(usage)
+    result = empty_usage()
+
+    for key in USAGE_TOTAL_KEYS:
+        if data.get(key) is not None:
+            result[key] = data[key]
+
+    if "prompt_tokens" in data:
+        result["total_prompt_tokens"] = data.get("prompt_tokens") or 0
+        result["total_prompt_cached_tokens"] = data.get("prompt_cached_tokens") or 0
+        result["total_prompt_cache_creation_tokens"] = (
+            data.get("prompt_cache_creation_tokens") or 0
+        )
+        result["total_completion_tokens"] = data.get("completion_tokens") or 0
+        result["total_tokens"] = data.get("total_tokens") or (
+            result["total_prompt_tokens"] + result["total_completion_tokens"]
+        )
+        result["entry_count"] = 1
+        result["raw"] = {
+            key: data[key]
+            for key in USAGE_SINGLE_CALL_KEYS
+            if data.get(key) is not None
+        }
+
+    by_model = data.get("by_model") or {}
+    result["by_model"] = {
+        model: {
+            key: value
+            for key in USAGE_MODEL_KEYS
+            if (value := stats.get(key)) is not None
+        }
+        for model, stats in by_model.items()
+        if isinstance(stats, dict)
+    }
+    return result
+
+
+def sum_usage(usages: list[dict]) -> dict:
+    total = empty_usage()
+    for usage in usages:
+        for key in USAGE_TOTAL_KEYS:
+            total[key] += usage.get(key, 0) or 0
+        for model, stats in (usage.get("by_model") or {}).items():
+            model_total = total["by_model"].setdefault(
+                model,
+                {
+                    "prompt_tokens": 0,
+                    "completion_tokens": 0,
+                    "total_tokens": 0,
+                    "cost": 0.0,
+                    "invocations": 0,
+                    "average_tokens_per_invocation": 0.0,
+                },
+            )
+            for key in (
+                "prompt_tokens",
+                "completion_tokens",
+                "total_tokens",
+                "cost",
+                "invocations",
+            ):
+                model_total[key] += stats.get(key, 0) or 0
+    for stats in total["by_model"].values():
+        invocations = stats.get("invocations", 0) or 0
+        stats["average_tokens_per_invocation"] = (
+            stats["total_tokens"] / invocations if invocations else 0.0
+        )
+    return total
+
+
 JUDGE_LLM = None
 
 
@@ -198,11 +329,11 @@ def _get_judge_llm():
     return JUDGE_LLM
 
 
-async def _evaluate_task(judge_messages) -> JudgementResult:
+async def _evaluate_task(judge_messages) -> tuple[JudgementResult, dict]:
     response = await _get_judge_llm().ainvoke(
         judge_messages, output_format=JudgementResult
     )
-    return response.completion
+    return response.completion, serialize_usage(getattr(response, "usage", None))
 
 
 def _write_json(path: Path, data: Any) -> None:
@@ -215,6 +346,7 @@ def _maybe_write_task_artifact(
     result: ExecutionResult | None,
     judgement: dict[str, Any] | None,
     score: int,
+    judge_usage: dict | None = None,
     error: str | None = None,
     tb: str | None = None,
 ) -> None:
@@ -245,6 +377,9 @@ def _maybe_write_task_artifact(
             "duration": result.duration_seconds,
             "cost": result.cost,
         }
+        payload["usage"] = result.usage or empty_usage()
+    if judge_usage is not None:
+        payload["judge_usage"] = judge_usage
     if error:
         payload["error"] = error
     if tb:
@@ -277,7 +412,7 @@ async def run_and_judge(
             ground_truth=task.get("answer"),
             screenshots_b64=result.screenshots_b64,
         )
-        judgement = await _evaluate_task(judge_messages)
+        judgement, judge_usage = await _evaluate_task(judge_messages)
         judgement_data = judgement.model_dump()
         score = 1 if judgement.verdict else 0
         print(f"Task {task_id} completed: score={score}")
@@ -289,6 +424,8 @@ async def run_and_judge(
             "steps": result.num_steps,
             "duration": result.duration_seconds,
             "cost": result.cost,
+            "usage": result.usage or empty_usage(),
+            "judge_usage": judge_usage,
             "judgement": judgement_data,
         }
         provider_session_id = getattr(result, "provider_session_id", None)
@@ -296,7 +433,9 @@ async def run_and_judge(
             data["provider_session_id"] = provider_session_id
         if hasattr(result, "stealth"):
             data["stealth"] = bool(getattr(result, "stealth"))
-        _maybe_write_task_artifact(task, result, judgement_data, score)
+        _maybe_write_task_artifact(
+            task, result, judgement_data, score, judge_usage=judge_usage
+        )
         _maybe_write_local_result(data)
         return data
 
@@ -310,9 +449,13 @@ async def run_and_judge(
             "steps": 0,
             "duration": _task_timeout(),
             "cost": 0,
+            "usage": empty_usage(),
+            "judge_usage": empty_usage(),
             "error": error_msg,
         }
-        _maybe_write_task_artifact(task, None, None, 0, error=error_msg)
+        _maybe_write_task_artifact(
+            task, None, None, 0, judge_usage=empty_usage(), error=error_msg
+        )
         _maybe_write_local_result(data)
         return data
 
@@ -327,9 +470,19 @@ async def run_and_judge(
             "steps": 0,
             "duration": 0,
             "cost": 0,
+            "usage": empty_usage(),
+            "judge_usage": empty_usage(),
             "error": error_msg,
             "traceback": tb,
         }
-        _maybe_write_task_artifact(task, None, None, 0, error=error_msg, tb=tb)
+        _maybe_write_task_artifact(
+            task,
+            None,
+            None,
+            0,
+            judge_usage=empty_usage(),
+            error=error_msg,
+            tb=tb,
+        )
         _maybe_write_local_result(data)
         return data

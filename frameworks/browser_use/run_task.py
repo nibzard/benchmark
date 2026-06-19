@@ -21,6 +21,7 @@ from frameworks import (
     interleave,
     run_and_judge,
     parse_params,
+    serialize_usage,
     validate_params,
 )
 
@@ -85,6 +86,7 @@ async def execute(
         except Exception:
             pass
 
+    usage = serialize_usage(history.usage)
     result = ExecutionResult(
         final_result=history.final_result() or "Agent did not return a result",
         steps=history.agent_steps(),
@@ -93,7 +95,8 @@ async def execute(
         ),
         num_steps=history.number_of_steps(),
         duration_seconds=history.total_duration_seconds(),
-        cost=history.usage.total_cost if history.usage else 0,
+        cost=usage.get("total_cost", 0),
+        usage=usage,
     )
     result.provider_session_id = provider_session_id
     result.stealth = stealth
