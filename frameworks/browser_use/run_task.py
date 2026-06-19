@@ -13,6 +13,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 from dotenv import load_dotenv
 from browser_use import Agent, Browser
 from browsers import BROWSERS
+from browser_patches import install_remote_typing_fallback
 from models import MODELS
 from frameworks import (
     ExecutionResult,
@@ -45,9 +46,20 @@ async def execute(
 ) -> ExecutionResult:
     """Run a browser-use agent on the task and return a standardized result."""
     provider = BROWSERS[browser_name]
+    if getattr(provider, "REMOTE_TYPING_FALLBACK", False):
+        install_remote_typing_fallback()
+
     browser = None
+    provider_session_id = None
+    stealth = (
+        getattr(provider, "STEALTH_CAPABLE", False)
+        and hasattr(provider, "stealth_enabled")
+        and provider.stealth_enabled()
+    )
     try:
         cdp_url = await provider.connect()
+        if hasattr(provider, "current_session_id"):
+            provider_session_id = provider.current_session_id()
         if cdp_url:
             browser = Browser(cdp_url=cdp_url)
         else:
@@ -73,7 +85,7 @@ async def execute(
         except Exception:
             pass
 
-    return ExecutionResult(
+    result = ExecutionResult(
         final_result=history.final_result() or "Agent did not return a result",
         steps=history.agent_steps(),
         screenshots_b64=encode_screenshots(
@@ -83,6 +95,9 @@ async def execute(
         duration_seconds=history.total_duration_seconds(),
         cost=history.usage.total_cost if history.usage else 0,
     )
+    result.provider_session_id = provider_session_id
+    result.stealth = stealth
+    return result
 
 
 async def main():

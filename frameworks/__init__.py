@@ -235,6 +235,11 @@ def _maybe_write_task_artifact(
             "ground_truth": task.get("answer"),
             "screenshots_b64": result.screenshots_b64,
         }
+        provider_session_id = getattr(result, "provider_session_id", None)
+        if provider_session_id is not None:
+            payload["agent_trace"]["provider_session_id"] = provider_session_id
+        if hasattr(result, "stealth"):
+            payload["agent_trace"]["stealth"] = bool(getattr(result, "stealth"))
         payload["metrics"] = {
             "steps": result.num_steps,
             "duration": result.duration_seconds,
@@ -286,6 +291,11 @@ async def run_and_judge(
             "cost": result.cost,
             "judgement": judgement_data,
         }
+        provider_session_id = getattr(result, "provider_session_id", None)
+        if provider_session_id is not None:
+            data["provider_session_id"] = provider_session_id
+        if hasattr(result, "stealth"):
+            data["stealth"] = bool(getattr(result, "stealth"))
         _maybe_write_task_artifact(task, result, judgement_data, score)
         _maybe_write_local_result(data)
         return data

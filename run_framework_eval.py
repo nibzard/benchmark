@@ -63,7 +63,13 @@ from pathlib import Path
 
 from dotenv import load_dotenv
 
-from frameworks import FRAMEWORKS, framework_to_module, interleave, load_tasks
+from frameworks import (
+    DEFAULT_TASK_TIMEOUT,
+    FRAMEWORKS,
+    framework_to_module,
+    interleave,
+    load_tasks,
+)
 
 ROOT_DIR = Path(__file__).resolve().parent
 
@@ -82,6 +88,27 @@ def _selected_indices(total: int, args: argparse.Namespace) -> list[int]:
     if bad:
         raise SystemExit(f"Task index out of range: {bad[:5]} for benchmark size {total}")
     return indices
+
+
+def _child_timeout(task_timeout: int | None) -> int:
+    raw = os.environ.get("FRAMEWORK_CHILD_TIMEOUT")
+    if raw:
+        try:
+            return int(raw)
+        except ValueError:
+            pass
+    return (task_timeout or DEFAULT_TASK_TIMEOUT) + 300
+
+
+async def _stop_child(proc: asyncio.subprocess.Process) -> None:
+    if proc.returncode is not None:
+        return
+    proc.terminate()
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=10)
+    except asyncio.TimeoutError:
+        proc.kill()
+        await proc.wait()
 
 
 async def _run_one(
@@ -137,7 +164,20 @@ async def _run_one(
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
     )
-    stdout, stderr = await proc.communicate()
+    timed_out = False
+    parent_timeout = _child_timeout(task_timeout)
+    try:
+        stdout, stderr = await asyncio.wait_for(
+            proc.communicate(), timeout=parent_timeout
+        )
+    except asyncio.TimeoutError:
+        timed_out = True
+        await _stop_child(proc)
+        stdout, stderr = await proc.communicate()
+    except asyncio.CancelledError:
+        await _stop_child(proc)
+        raise
+
     if stdout:
         print(stdout.decode("utf-8", errors="replace"), end="")
     if stderr:
@@ -145,6 +185,17 @@ async def _run_one(
 
     if result_file.exists():
         return json.loads(result_file.read_text(encoding="utf-8"))
+
+    if timed_out:
+        return {
+            "task_index": task_index,
+            "task_id": None,
+            "score": 0,
+            "steps": 0,
+            "duration": parent_timeout,
+            "cost": 0,
+            "error": f"Runner exceeded parent timeout after {parent_timeout}s",
+        }
 
     return {
         "task_index": task_index,
@@ -231,6 +282,12 @@ async def _run_all(args: argparse.Namespace) -> list[dict]:
                 "steps": r.get("steps", 0),
                 "duration": r.get("duration", 0),
                 "cost": r.get("cost", 0),
+                **(
+                    {"provider_session_id": r["provider_session_id"]}
+                    if r.get("provider_session_id")
+                    else {}
+                ),
+                **({"stealth": r["stealth"]} if "stealth" in r else {}),
                 **({"error": r["error"]} if r.get("error") else {}),
             }
             for r in results
