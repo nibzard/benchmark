@@ -29,6 +29,7 @@ import argparse
 import asyncio
 import base64, hashlib, json, traceback
 import signal
+import time
 from datetime import datetime
 from pathlib import Path
 from cryptography.fernet import Fernet
@@ -52,6 +53,13 @@ BENCHMARKS = {
 MAX_CONCURRENT = 3
 TASK_TIMEOUT = 1800  # 30 minutes max per task
 PROVIDER_SETUP_TIMEOUT = 120  # 2 minutes max to create/connect a browser
+CDP_STALL_WATCHDOG_ENABLED = os.getenv("CDP_STALL_WATCHDOG", "true").lower() in (
+    "1",
+    "true",
+    "yes",
+)
+CDP_STALL_TIMEOUT = float(os.getenv("CDP_STALL_TIMEOUT", "120"))
+CDP_STALL_WARNING_THRESHOLD = int(os.getenv("CDP_STALL_WARNING_THRESHOLD", "3"))
 
 AGENT_FRAMEWORK_NAME = "BrowserUse"
 AGENT_FRAMEWORK_VERSION = "0.13.1"
@@ -72,6 +80,110 @@ MODELS = {
         base_url=ZAI_BASE_URL,
     ),
 }
+
+
+class BrowserConnectionStalled(RuntimeError):
+    """Raised when the browser CDP connection appears permanently stalled."""
+
+
+class CdpStallLogWatcher(logging.Handler):
+    """Detect browser-use/Playwright CDP websocket stalls from warning logs."""
+
+    CONNECTION_CLOSED_PATTERNS = (
+        "ConnectionClosedError",
+        "keepalive ping timeout",
+        "no close frame received",
+        "Session with given id not found",
+        "'code': -32001",
+        '"code": -32001',
+        "Target closed",
+        "Browser closed",
+    )
+    STALL_PATTERNS = (
+        "Possible slow processing or deadlock",
+        "DOMWatchdog.on_BrowserStateRequestEvent",
+        "ScreenshotWatchdog.on_ScreenshotEvent",
+        "BrowserSession.on_NavigateToUrlEvent",
+    )
+    LOGGER_NAMES = ("bubus", "browser_use")
+
+    def __init__(
+        self,
+        *,
+        loop: asyncio.AbstractEventLoop,
+        stall_timeout: float,
+        warning_threshold: int,
+    ) -> None:
+        super().__init__(level=logging.WARNING)
+        self.loop = loop
+        self.stall_timeout = stall_timeout
+        self.warning_threshold = warning_threshold
+        self.event = asyncio.Event()
+        self.reason = ""
+        self.warning_count = 0
+        self.first_warning_at: float | None = None
+        self._logger_levels: list[tuple[logging.Logger, int]] = []
+
+    def __enter__(self):
+        for name in self.LOGGER_NAMES:
+            logger = logging.getLogger(name)
+            self._logger_levels.append((logger, logger.level))
+            if logger.level == logging.NOTSET or logger.level > logging.WARNING:
+                logger.setLevel(logging.WARNING)
+            logger.addHandler(self)
+        return self
+
+    def __exit__(self, exc_type, exc, tb) -> None:
+        for logger, previous_level in self._logger_levels:
+            logger.removeHandler(self)
+            logger.setLevel(previous_level)
+        self._logger_levels.clear()
+
+    def emit(self, record: logging.LogRecord) -> None:
+        try:
+            message = record.getMessage()
+        except Exception:
+            return
+        if record.exc_info:
+            message = "\n".join(
+                (
+                    message,
+                    "".join(traceback.format_exception(*record.exc_info)),
+                )
+            )
+
+        if any(pattern in message for pattern in self.CONNECTION_CLOSED_PATTERNS):
+            self._trigger(f"CDP websocket closed: {message}")
+            return
+
+        if not any(pattern in message for pattern in self.STALL_PATTERNS):
+            return
+
+        now = time.monotonic()
+        self.warning_count += 1
+        if self.first_warning_at is None:
+            self.first_warning_at = now
+            return
+
+        stalled_for = now - self.first_warning_at
+        if (
+            self.warning_count >= self.warning_threshold
+            and stalled_for >= self.stall_timeout
+        ):
+            self._trigger(
+                "CDP browser operations stalled for "
+                f"{stalled_for:.1f}s after {self.warning_count} warnings: {message}"
+            )
+
+    def _trigger(self, reason: str) -> None:
+        if self.event.is_set():
+            return
+        self.reason = reason
+        self.loop.call_soon_threadsafe(self.event.set)
+
+    async def wait(self) -> str:
+        await self.event.wait()
+        return self.reason
 
 
 def encode_screenshots(paths: list[str]) -> list[str]:
@@ -278,6 +390,49 @@ async def create_browser(browser_provider) -> Browser:
     return Browser(cdp_url=cdp_url)
 
 
+async def run_agent_with_watchdogs(agent: Agent, *, browser_provider, task_id) -> object:
+    if not (browser_provider and CDP_STALL_WATCHDOG_ENABLED):
+        return await asyncio.wait_for(agent.run(), timeout=TASK_TIMEOUT)
+
+    loop = asyncio.get_running_loop()
+    watcher = CdpStallLogWatcher(
+        loop=loop,
+        stall_timeout=CDP_STALL_TIMEOUT,
+        warning_threshold=CDP_STALL_WARNING_THRESHOLD,
+    )
+    agent_task = asyncio.create_task(agent.run(), name=f"agent-{task_id}")
+    stall_task = asyncio.create_task(watcher.wait(), name=f"cdp-stall-{task_id}")
+
+    try:
+        with watcher:
+            done, _pending = await asyncio.wait(
+                {agent_task, stall_task},
+                timeout=TASK_TIMEOUT,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+
+        if not done:
+            agent_task.cancel()
+            stall_task.cancel()
+            await asyncio.gather(agent_task, stall_task, return_exceptions=True)
+            raise asyncio.TimeoutError
+
+        if agent_task in done:
+            stall_task.cancel()
+            await asyncio.gather(stall_task, return_exceptions=True)
+            return agent_task.result()
+
+        reason = stall_task.result()
+        agent_task.cancel()
+        await asyncio.gather(agent_task, return_exceptions=True)
+        raise BrowserConnectionStalled(reason)
+    finally:
+        if not agent_task.done():
+            agent_task.cancel()
+        if not stall_task.done():
+            stall_task.cancel()
+
+
 async def run_task(
     task: dict,
     semaphore: asyncio.Semaphore,
@@ -341,8 +496,10 @@ async def run_task(
             )
 
             try:
-                agent_history = await asyncio.wait_for(
-                    agent.run(), timeout=TASK_TIMEOUT
+                agent_history = await run_agent_with_watchdogs(
+                    agent,
+                    browser_provider=browser_provider,
+                    task_id=task_id,
                 )
             except asyncio.TimeoutError:
                 print(f"Task {task_id} timed out after {TASK_TIMEOUT}s")
@@ -564,6 +721,9 @@ async def main():
         "max_concurrent": MAX_CONCURRENT,
         "task_timeout": TASK_TIMEOUT,
         "provider_setup_timeout": PROVIDER_SETUP_TIMEOUT,
+        "cdp_stall_watchdog_enabled": CDP_STALL_WATCHDOG_ENABLED,
+        "cdp_stall_timeout": CDP_STALL_TIMEOUT,
+        "cdp_stall_warning_threshold": CDP_STALL_WARNING_THRESHOLD,
         "total_tasks": len(tasks),
         "completed_tasks": 0,
         "successful_tasks": 0,

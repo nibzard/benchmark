@@ -7,6 +7,7 @@ Note: Steel's WebSocket host does not support IPv6. The monkey-patch below
 forces IPv4 resolution for connect.steel.dev to avoid 502 errors.
 """
 
+import asyncio
 import os
 import socket
 from contextvars import ContextVar
@@ -97,11 +98,25 @@ async def disconnect() -> None:
     if not session_id:
         return
     try:
-        async with httpx.AsyncClient() as client:
-            await client.delete(
-                f"https://api.steel.dev/v1/sessions/{session_id}",
-                headers={"steel-api-key": os.environ["STEEL_API_KEY"]},
-                timeout=30,
-            )
+        for attempt in range(3):
+            try:
+                async with httpx.AsyncClient() as client:
+                    resp = await client.delete(
+                        f"https://api.steel.dev/v1/sessions/{session_id}",
+                        headers={"steel-api-key": os.environ["STEEL_API_KEY"]},
+                        timeout=10,
+                    )
+                    if resp.status_code != 404:
+                        resp.raise_for_status()
+                return
+            except (httpx.HTTPStatusError, httpx.TimeoutException, httpx.NetworkError) as e:
+                if attempt == 2:
+                    raise
+                wait = 2**attempt
+                print(
+                    f"Steel cleanup warning: {type(e).__name__}; "
+                    f"retry {attempt + 1}/2 in {wait}s"
+                )
+                await asyncio.sleep(wait)
     finally:
         _session_id.set(None)
