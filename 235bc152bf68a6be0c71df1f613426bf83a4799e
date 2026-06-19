@@ -1,0 +1,1 @@
+Integration branch: detects browser-use/Playwright CDP websocket stalls from warning/error logs and fails the task promptly so provider cleanup can recycle the remote browser session instead of waiting for the 30-minute task timeout.
