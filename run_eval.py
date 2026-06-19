@@ -35,7 +35,7 @@ from pathlib import Path
 from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 from browser_use import Agent, Browser, ChatGoogle
-from browser_use.llm import ChatBrowserUse
+from browser_use.llm import ChatAnthropic, ChatBrowserUse
 from browsers import PROVIDERS, get_provider
 from browser_patches import install_remote_typing_fallback
 from judge import construct_judge_messages, JudgementResult
@@ -68,6 +68,10 @@ ZAI_BASE_URL = os.getenv("ZAI_BASE_URL") or "https://api.z.ai/api/coding/paas/v4
 
 MODELS = {
     "bu-2-0": lambda: ChatBrowserUse(model="bu-2-0"),
+    "claude-opus-4-8": lambda: ChatAnthropic(
+        model="claude-opus-4-8",
+        api_key=os.getenv("ANTHROPIC_API_KEY"),
+    ),
     "GLM-5.1": lambda: ChatZAI(
         model="glm-5.1",
         api_key=os.getenv("ZAI_API_KEY"),

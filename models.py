@@ -40,6 +40,7 @@ MODELS = {
     "claude-opus-4-5": lambda: _anthropic("claude-opus-4-5"),
     "claude-opus-4-6": lambda: _anthropic("claude-opus-4-6"),
     "claude-opus-4-7": lambda: _anthropic("claude-opus-4-7"),
+    "claude-opus-4-8": lambda: _anthropic("claude-opus-4-8"),
     "gemini-2.5-flash-lite": lambda: _google("gemini-2.5-flash-lite"),
     "gemini-2.5-flash": lambda: _google("gemini-2.5-flash"),
     "gemini-3-flash-preview": lambda: _google("gemini-3-flash-preview"),
