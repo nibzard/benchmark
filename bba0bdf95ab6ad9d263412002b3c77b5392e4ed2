@@ -1,0 +1,12 @@
+# Context
+
+## Background
+Full Steel stealth benchmark runs could hang for long periods after the Steel CDP websocket dropped. browser-use would keep waiting inside DOM/screenshot/navigation watchdog handlers, leaving benchmark tasks idle until the 30-minute task timeout.
+
+## Why This Way
+The runner now treats known CDP disconnect/stall log signatures as task failures, cancels the agent run, records the failure in run_state.json, and lets provider cleanup execute. Steel cleanup also retries DELETE calls so transient API timeouts do not leave session cleanup as a single-shot best effort.
+
+## Verification
+- py_compile passed for run_eval.py and browsers/steel.py.
+- Mock log watcher tests covered keepalive timeout, sustained DOM/screenshot stall warnings, and Steel session-lost errors.
+- Live one-task Steel stealth run with CDP_STALL_TIMEOUT=20 and CDP_STALL_WARNING_THRESHOLD=2 completed the benchmark process with a BrowserConnectionStalled task failure instead of hanging.
