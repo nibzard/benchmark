@@ -50,3 +50,24 @@ def get_provider(name: str):
     if name not in PROVIDERS:
         raise ValueError(f"Unknown browser provider: {name}. Available: {PROVIDERS}")
     return importlib.import_module(f"browsers.{name}")
+
+
+def provider_arm_config(name: str) -> dict:
+    """Best-effort snapshot of a provider's arm-defining config, or ``{}``.
+
+    A provider opts in by defining a module-level ``arm_config()`` (e.g. Steel's
+    solver/stealth/region/proxy knobs). This never raises: arm labeling is run
+    metadata, not something that should be allowed to fail a run.
+    """
+    try:
+        provider = get_provider(name)
+    except Exception:
+        return {}
+    fn = getattr(provider, "arm_config", None)
+    if not callable(fn):
+        return {}
+    try:
+        cfg = fn()
+    except Exception:
+        return {}
+    return cfg if isinstance(cfg, dict) else {}

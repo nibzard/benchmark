@@ -24,6 +24,16 @@ def _env_enabled(name: str, default: bool) -> bool:
     return raw.strip().lower() not in _FALSE_VALUES
 
 
+def _env_int(name: str, default: int, minimum: int = 0) -> int:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    try:
+        return max(minimum, int(raw))
+    except ValueError:
+        return default
+
+
 def _get_mapping_value(value: Any, key: str) -> Any:
     if isinstance(value, dict):
         return value.get(key)
@@ -90,6 +100,11 @@ def _content_block_diagnostics(response: Any) -> dict[str, Any]:
         diagnostics["text_sha256"] = hashlib.sha256(text.encode("utf-8")).hexdigest()
         if _env_enabled("ANTHROPIC_TOOL_USE_RETRY_LOG_TEXT", False):
             diagnostics["text_excerpt"] = text[:500]
+        if _env_enabled("ANTHROPIC_TOOL_USE_RETRY_SAVE_TEXT", False):
+            text_limit = _env_int("ANTHROPIC_TOOL_USE_RETRY_TEXT_LIMIT", 4000)
+            diagnostics["failed_output_text"] = text[:text_limit]
+            diagnostics["failed_output_text_limit"] = text_limit
+            diagnostics["failed_output_text_truncated"] = len(text) > text_limit
 
     return diagnostics
 

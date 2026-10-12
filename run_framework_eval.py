@@ -73,11 +73,32 @@ from frameworks import (
     sum_usage,
 )
 
+# Arm labeling is best-effort: this runner isolates providers in subprocesses and
+# must not require every provider's SDK at orchestration time. If the browsers
+# package can't import here, arm metadata is simply omitted -- the run is unaffected.
+try:
+    from browsers import provider_arm_config as _provider_arm_config
+except Exception:  # pragma: no cover - environment dependent
+    def _provider_arm_config(name: str) -> dict:
+        return {}
+
 ROOT_DIR = Path(__file__).resolve().parent
 
 
 def _safe_part(value: str) -> str:
     return re.sub(r"[^A-Za-z0-9_.-]+", "-", value).strip("-") or "unknown"
+
+
+def _browser_arm_fields(browser: str) -> dict:
+    """Self-labeling browser-provider config for the run summary.
+
+    ``solver_state`` (on/off) is surfaced at the top level as the primary arm
+    axis for Steel-style providers; the full snapshot lives under
+    ``browser_config``. Providers without an ``arm_config()`` get an empty
+    snapshot and ``solver_state=None``.
+    """
+    cfg = _provider_arm_config(browser)
+    return {"browser_config": cfg, "solver_state": cfg.get("solver_state")}
 
 
 def _selected_indices(total: int, args: argparse.Namespace) -> list[int]:
@@ -245,6 +266,13 @@ async def _run_all(args: argparse.Namespace) -> list[dict]:
         f"Running {len(indices)} task(s): benchmark={args.benchmark} "
         f"framework={args.framework} browser={browser} model={args.model}"
     )
+    arm_fields = _browser_arm_fields(browser)
+    if arm_fields["browser_config"]:
+        solver = arm_fields["solver_state"]
+        print(
+            f"Browser arm: solver_state={solver} "
+            f"config={arm_fields['browser_config']}"
+        )
     if framework_info.repo:
         print(f"Framework repo: {framework_info.repo} ref={args.framework_ref}")
 
@@ -276,6 +304,7 @@ async def _run_all(args: argparse.Namespace) -> list[dict]:
         "browser": browser,
         "model": args.model,
         "params": args.params,
+        **arm_fields,
         "task_indices": indices,
         "tasks_completed": len(results),
         "tasks_successful": sum(1 for r in results if r.get("score") == 1),

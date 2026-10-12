@@ -59,6 +59,30 @@ def proxy_config() -> bool | dict:
     return {"geolocation": geolocation}
 
 
+def arm_config() -> dict:
+    """Snapshot of the Steel session knobs that define a run "arm".
+
+    Two runs that share framework/browser/model but differ in captcha solving,
+    stealth, region, or proxy geolocation are distinct arms. Returning this lets
+    the runner self-label summary groups instead of relying on ``--params``.
+    Mirrors the session payload assembled in :func:`connect`.
+    """
+    country = os.environ.get("STEEL_PROXY_COUNTRY")
+    state = os.environ.get("STEEL_PROXY_STATE")
+    city = os.environ.get("STEEL_PROXY_CITY")
+    proxy = (
+        {"country": country, "state": state, "city": city}
+        if any((country, state, city))
+        else None
+    )
+    return {
+        "solver_state": solve_captcha_enabled(),
+        "stealth": stealth_enabled(),
+        "region": os.environ.get("STEEL_REGION"),
+        "proxy": proxy,
+    }
+
+
 def current_session_id() -> str | None:
     return _session_id.get()
 

@@ -36,7 +36,7 @@ from cryptography.fernet import Fernet
 from dotenv import load_dotenv
 from browser_use import Agent, Browser, ChatGoogle
 from browser_use.llm import ChatAnthropic, ChatBrowserUse
-from browsers import PROVIDERS, get_provider
+from browsers import PROVIDERS, get_provider, provider_arm_config
 from browser_patches import install_remote_typing_fallback
 from judge import construct_judge_messages, JudgementResult
 from llms import ChatZAI
@@ -50,7 +50,7 @@ BENCHMARKS = {
     "BU_Bench_V1": Path(__file__).parent / "BU_Bench_V1.enc",
     "Stealth_Bench_V1": Path(__file__).parent / "Stealth_Bench_V1.enc",
 }
-MAX_CONCURRENT = 3
+MAX_CONCURRENT = int(os.getenv("MAX_CONCURRENT", "3"))
 TASK_TIMEOUT = 1800  # 30 minutes max per task
 PROVIDER_SETUP_TIMEOUT = 120  # 2 minutes max to create/connect a browser
 CDP_STALL_WATCHDOG_ENABLED = os.getenv("CDP_STALL_WATCHDOG", "true").lower() in (
@@ -715,6 +715,11 @@ async def main():
     if args.task_ids:
         wanted = {int(x) for x in args.task_ids.split(",") if x.strip()}
         tasks = [t for t in tasks if t.get("task_id") in wanted]
+    _browser_cfg = provider_arm_config(browser_name)
+    arm_fields = {
+        "browser_config": _browser_cfg,
+        "solver_state": _browser_cfg.get("solver_state"),
+    }
     run_state = {
         "run_start": run_start,
         "status": "running",
@@ -722,6 +727,7 @@ async def main():
         "browser": browser_name,
         "model": model_name,
         "stealth": stealth,
+        **arm_fields,
         "max_concurrent": MAX_CONCURRENT,
         "task_timeout": TASK_TIMEOUT,
         "provider_setup_timeout": PROVIDER_SETUP_TIMEOUT,
@@ -879,6 +885,7 @@ async def main():
             "browser": browser_name,
             "model": model_name,
             "stealth": stealth,
+            **arm_fields,
             "tasks_completed": len(results),
             "tasks_successful": successful,
             "total_steps": total_steps,

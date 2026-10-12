@@ -88,6 +88,8 @@ class AnthropicToolUseRetryPatchTests(unittest.IsolatedAsyncioTestCase):
     def setUp(self) -> None:
         os.environ.pop("ANTHROPIC_TOOL_USE_RETRY", None)
         os.environ.pop("ANTHROPIC_TOOL_USE_RETRY_LOG_TEXT", None)
+        os.environ.pop("ANTHROPIC_TOOL_USE_RETRY_SAVE_TEXT", None)
+        os.environ.pop("ANTHROPIC_TOOL_USE_RETRY_TEXT_LIMIT", None)
         install_anthropic_tool_use_retry()
         clear_anthropic_tool_use_retry_diagnostics()
 
@@ -144,6 +146,32 @@ class AnthropicToolUseRetryPatchTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(diagnostics[0]["phase"], "initial")
         self.assertEqual(diagnostics[0]["retry_outcome"], "recovered")
         self.assertNotIn("text_excerpt", diagnostics[0])
+
+    async def test_missing_tool_use_can_capture_failed_text_when_enabled(self) -> None:
+        os.environ["ANTHROPIC_TOOL_USE_RETRY_SAVE_TEXT"] = "true"
+        os.environ["ANTHROPIC_TOOL_USE_RETRY_TEXT_LIMIT"] = "12"
+        llm, _ = make_llm(
+            [
+                FakeResponse(
+                    [FakeTextBlock("0123456789abcdef")],
+                    FakeUsage(input_tokens=10, output_tokens=2),
+                ),
+                FakeResponse(
+                    [FakeToolBlock({"value": "recovered"})],
+                    FakeUsage(input_tokens=12, output_tokens=4),
+                ),
+            ]
+        )
+
+        await llm.ainvoke(
+            [UserMessage(content="Return structured output")],
+            output_format=AgentOutput,
+        )
+
+        diagnostics = get_anthropic_tool_use_retry_diagnostics()
+        self.assertEqual(diagnostics[0]["failed_output_text"], "0123456789ab")
+        self.assertEqual(diagnostics[0]["failed_output_text_limit"], 12)
+        self.assertTrue(diagnostics[0]["failed_output_text_truncated"])
 
     async def test_retry_failure_preserves_diagnostics(self) -> None:
         llm, client = make_llm(

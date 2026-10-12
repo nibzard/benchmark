@@ -5,6 +5,8 @@ import os
 from browser_use import ChatGoogle
 from browser_use.llm import ChatAnthropic, ChatBrowserUse, ChatOpenAI
 
+from llms import ChatZAI
+
 
 def _openai(model: str):
     return ChatOpenAI(model=model, api_key=os.getenv("OPENAI_API_KEY"))
@@ -23,6 +25,18 @@ def _openrouter(model: str):
         model=model,
         base_url="https://openrouter.ai/api/v1",
         api_key=os.getenv("OPENROUTER_API_KEY"),
+    )
+
+
+ZAI_BASE_URL = os.getenv("ZAI_BASE_URL") or "https://api.z.ai/api/coding/paas/v4"
+
+
+def _zai(model: str, *, reasoning_effort="max"):
+    return ChatZAI(
+        model=model,
+        api_key=os.getenv("ZAI_API_KEY"),
+        base_url=ZAI_BASE_URL,
+        reasoning_effort=reasoning_effort,
     )
 
 
@@ -48,4 +62,6 @@ MODELS = {
     "gemini-3.1-pro-preview": lambda: _google("gemini-3.1-pro-preview"),
     "gemini-3-1-pro-preview": lambda: _google("gemini-3.1-pro-preview"),
     "kimi-k2.5": lambda: _openrouter("moonshotai/kimi-k2.5"),
+    "GLM-5.1": lambda: _zai("glm-5.1", reasoning_effort=None),
+    "GLM-5.2": lambda: _zai("glm-5.2"),
 }
